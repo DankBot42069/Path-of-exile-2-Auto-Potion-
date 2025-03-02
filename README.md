@@ -62,7 +62,7 @@ Clone the Repository:
 
 bash
 Copy
-git clone https://github.com/yourusername/poe-auto-potion-bot.git
+git clone https://github.com/DankBot42069/poe-auto-potion-bot.git
 cd poe-auto-potion-bot
 Install Dependencies:
 
