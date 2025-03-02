@@ -73,7 +73,7 @@ Clone the Repository:
 
 bash
 Copy
-git clone https://github.com/yourusername/poe-auto-potion-bot.git
+git clone https://github.com/DankBot42069/poe-auto-potion-bot.git
 cd poe-auto-potion-bot
 Add Template Images:
 Place your health.png and mana.png template images in the repository root. These should be screenshots of your health and mana bars.
