@@ -1,111 +1,82 @@
-PoE Auto-Potion Bot ⚔️💊
-A Python-based auto-potion bot for Path of Exile! This tool works for both PoE 1 and PoE 2, with the auto-location feature optimized for PoE 2. It monitors your health and mana bars and automatically uses potions when needed—so you can focus on the action! 🚀
+# PoE2 Auto-Potion & Chickening Bot
 
-✨ Key Features
-Auto Location Detection
-The bot automatically finds your health (❤️) and mana (💙) bar regions by processing template images (health.png and mana.png).
+This is a simple Python/Tkinter utility that automatically uses health and mana potions in Path of Exile 2 when your HP/MP falls below certain thresholds. It can also perform a "chicken" (emergency logout) when health is critically low.
 
-Template Refinement:
-It thresholds the images to keep only the target colors (red for health, blue for mana).
-Scans vertical columns to find the area with the most target pixels.
-Crops a fixed-width slice and removes a small percentage from the top and bottom for accurate readings.
-Manual Region Selection
-If auto-detection isn't perfect, manually select the regions via an interactive window. 🎯
+## Features
 
-Graphical User Interface (GUI)
-A friendly Tkinter-based control panel to:
+1. **Automatic Potion Usage**  
+   - Monitors HP and MP using on-screen recognition.  
+   - Presses assigned hotkeys for Health and Mana potions when thresholds are reached.
 
-View real-time health/mana percentages.
-Adjust thresholds with entry fields and dual sliders.
-Choose your target window from a list of active windows.
-Save settings (stored in config.json).
-Hotkey Support
-Start/stop and pause the bot with global hotkeys (default: F8 to toggle, F9 to pause). ⌨️
+2. **Adjustable Thresholds (Dual Sliders)**  
+   - You can set a **lower** and **upper** threshold for both HP and MP.  
+   - The script uses a randomly varying trigger within your specified (lower, upper) range to avoid a too-consistent pattern.
 
-Resolution Independent
-The detection and popup are scaled so that it works on any resolution!
+3. **Chickening (Emergency Logout)**  
+   - If HP dips below a critical threshold (e.g., 30%), the bot presses ESC and clicks **Exit to Log In Screen**.  
+   - Waits until the game is back and HP is at least 50% before resuming normal potion usage.
 
-🔍 How It Works
-Screenshot Capture
-The bot uses pyautogui to capture the target game window based on the selected window title.
+4. **Configurable Delays**  
+   - You can set custom delays for HP and MP potion presses.
 
-Template Matching
+5. **Overlay**  
+   - Optionally shows real-time threshold lines over the HP and MP bars in the game window.
 
-Refine Template Crop:
-The function refine_template_crop(template_img, target_color) converts the template image to HSV, thresholds for red or blue, and crops to the bounding box of the target color.
-Crop by Maximum Color Column:
-The function crop_by_max_color_column(template_img, target_color, slice_width, crop_percent):
-Scans each vertical column to find the one with the highest target color intensity.
-Extracts a vertical slice (default 4 pixels wide) from that column.
-Crops off a small percentage (default 5% for mana and 2% for health) from the top and bottom.
-Finally, refines the crop so only the target color remains.
-Auto-Found Regions Popup:
-A popup (800×600) shows the detected regions with red (HP) and blue (MP) rectangles overlaid. Click "Confirm" to accept the selection.
-Monitoring & Potion Usage
-The bot continuously reads the percentage of target pixels from your health and mana regions. If these fall below your set thresholds, it simulates key presses to use the appropriate potion. 💥
+6. **Region Selection**  
+   - Manually select the on-screen regions for HP and MP bars.  
+   - Optionally use “gray detection” if the HP/MP bars appear mostly gray or black when empty.
 
-⚙️ Functions Overview
-refine_template_crop(template_img, target_color)
-Thresholds the template image in HSV to keep only red (❤️) or blue (💙) pixels and crops to that area.
+7. **Global Hotkeys**  
+   - Start/Stop monitoring.  
+   - Pause/Resume.  
+   - Bring up the UI quickly from inside the game.
 
-crop_by_max_color_column(template_img, target_color, slice_width, crop_percent)
-Finds the vertical column with the most target color, extracts a fixed-width slice, and crops a percentage off the top and bottom before refining the crop.
+## Basic Usage
 
-show_auto_found_popup(screenshot_cv, hp_region, mp_region)
-Resizes the screenshot to 800×600, overlays the detected HP and MP regions, and shows a popup with a Confirm button.
+1. **Install Dependencies**  
+   - [Python 3.8+](https://www.python.org/downloads/)  
+   - `pip install opencv-python pyautogui pillow keyboard pywin32`
 
-GUI Functions:
+2. **Run the Script**  
+   - Open a terminal or command prompt and run:  
+     ```bash
+     python your_script_name.py
+     ```
+   - The GUI should appear.
 
-select_region_interactively(region_name) – Opens an interactive window for manual region selection.
-select_target_window() – Lets you choose the game window from a list of active windows.
-auto_find_regions() – Automatically locates health and mana regions using the refined template cropping.
-toggle_monitoring() and monitor_loop() – Start/stop monitoring and automatically use potions based on thresholds.
-🚀 Getting Started
-Prerequisites
-Python 3.x
-Dependencies:
-Install the following packages:
-bash
-Copy
-pip install opencv-python pillow pyautogui keyboard pywin32
-Installation
-Clone the Repository:
+3. **Select Target Window**  
+   - Click “Select Target Window” and choose the title of your Path of Exile 2 client.
 
-bash
-Copy
-git clone https://github.com/DankBot42069/poe-auto-potion-bot.git
-cd poe-auto-potion-bot
-Add Template Images:
-Place your health.png and mana.png template images in the repository root. These should be screenshots of your health and mana bars.
+4. **Select HP/MP Regions**  
+   - Click **Select HP Region** or **Select MP Region**.  
+   - A screenshot preview appears; drag a rectangle around the respective bars and confirm.
 
-Run the Bot:
+5. **Adjust Threshold Sliders**  
+   - In the “HP Fill & Thresholds” and “MP Fill & Thresholds” sections, move the sliders or enter numeric values.  
+   - The **lower** threshold is the baseline; the **upper** threshold sets how much random variance you allow.
 
-bash
-Copy
-python your_script_name.py
-🔧 Configuration & Usage
-Config File:
-Settings are stored in config.json (thresholds, delays, target window, region coordinates).
+6. **Configure Settings**  
+   - Potion Delays (HP Delay, MP Delay)  
+   - Hotkeys (Toggle Key, Pause Key, SingleScreen Key)  
+   - Chickening (Enable, plus the HP threshold).  
+   - [Optional] Check “Use Gray as HP/MP?” if your bars are mostly grayscale when empty.
 
-GUI:
-Use the control panel to:
+7. **Press “Start Monitoring”**  
+   - The bot begins watching your HP/MP and automatically presses potions.  
+   - If chickening is enabled and your HP drops below the critical threshold, it will automatically exit to the log-in screen and wait to re-enter.
 
-View and adjust health/mana thresholds.
-Manually select regions if auto-detection isn't perfect.
-Choose the game window to capture.
-Monitor real-time health/mana values.
-Auto-Detection:
-Click "Auto Find HP/MP Regions" to capture a screenshot, process your template images, and display a popup (800×600) with detected regions. Confirm to save the regions.
+8. **Hotkeys**  
+   - By default, `F8` toggles Monitoring On/Off.  
+   - `F9` pauses/resumes.  
+   - `F10` shows the UI on top (and presses ESC in-game).  
+   - You can edit these to your preference.
 
-Hotkeys:
-Use F8 to toggle monitoring and F9 to pause.
+## Donation
 
-🤝 Contributing
-Contributions are welcome! Feel free to fork the repository and submit pull requests. For major changes, please open an issue to discuss your ideas first.
+If you find this tool helpful and would like to support continued development, you can donate to any of these addresses:
 
-📄 License
-This project is licensed under the MIT License.
+- **Solana**: `bJEqC85NdYkaAA8mxHygM3HCo5VhBzG15XLmw18KSZj`
+- **Ethereum (ETH)**: `0xf9d3a12F836fCB3D2788b49531CbeaC92300E3BA`
+- **Bitcoin (BTC)**: `bc1q9vqp8z78ryhw824wrafer9vrdn8g67w8lslmfs`
 
-🙏 Acknowledgments
-Thanks to the developers behind OpenCV, pyautogui, Pillow, and keyboard for their fantastic libraries.
-Inspired by the PoE community and the need for improved automation in gameplay. 🎮
+Thank you for your support!
