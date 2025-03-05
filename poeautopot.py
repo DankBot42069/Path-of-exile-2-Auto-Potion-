@@ -39,6 +39,9 @@ MONITOR_SLEEP_TIME = 0.2
 DEFAULT_CHICKEN_ENABLED = False
 DEFAULT_CHICKEN_THRESHOLD = 30  # HP% below which to log out quickly
 
+# NEW: Default increase percentage when poisoned (health bar turns green)
+DEFAULT_POISONED_THRESHOLD_INCREASE = 0
+
 # For some older Pillow versions
 try:
     RESAMPLE_FILTER = Image.Resampling.LANCZOS
@@ -221,7 +224,9 @@ def load_config():
             "TARGET_WINDOW_TITLE": "Path of Exile 2",
             "SHOW_THRESHOLD_OVERLAY": False,
             "CHICKEN_ENABLED": DEFAULT_CHICKEN_ENABLED,
-            "CHICKEN_THRESHOLD": DEFAULT_CHICKEN_THRESHOLD
+            "CHICKEN_THRESHOLD": DEFAULT_CHICKEN_THRESHOLD,
+            # NEW: Poisoned threshold increase percentage
+            "POISONED_THRESHOLD_INCREASE": DEFAULT_POISONED_THRESHOLD_INCREASE
         }
         save_config()
 
@@ -244,7 +249,7 @@ def get_game_window_rect():
 
 
 # ------------------------------------------------------------------------------
-# HP/MP Fill detection
+# HP/MP Fill detection (Modified for Poisoned/Green Health)
 # ------------------------------------------------------------------------------
 def get_health_fill_percentage(region):
     """Return HP fill% from the region. 0 if region is invalid or not found."""
@@ -262,16 +267,35 @@ def get_health_fill_percentage(region):
         return (full_pixels / total_pixels) * 100 if total_pixels else 0
     else:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        # Red detection (normal health)
         lower_red1 = np.array([0, 50, 50])
         upper_red1 = np.array([10, 255, 255])
         lower_red2 = np.array([160, 50, 50])
         upper_red2 = np.array([180, 255, 255])
-        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        mask = cv2.bitwise_or(mask1, mask2)
-        red_pixels = cv2.countNonZero(mask)
-        total_pixels = mask.shape[0] * mask.shape[1]
-        return (red_pixels / total_pixels) * 100 if total_pixels else 0
+        mask_red1 = cv2.inRange(hsv, lower_red1, upper_red1)
+        mask_red2 = cv2.inRange(hsv, lower_red2, upper_red2)
+        mask_red = cv2.bitwise_or(mask_red1, mask_red2)
+        
+        # Green detection (poisoned health)
+        lower_green = np.array([40, 50, 50])
+        upper_green = np.array([80, 255, 255])
+        mask_green = cv2.inRange(hsv, lower_green, upper_green)
+        
+        red_pixels = cv2.countNonZero(mask_red)
+        green_pixels = cv2.countNonZero(mask_green)
+        total_pixels = mask_red.shape[0] * mask_red.shape[1]
+        if total_pixels:
+            red_fill = (red_pixels / total_pixels) * 100
+            green_fill = (green_pixels / total_pixels) * 100
+        else:
+            return 0
+        
+        # Determine if the health bar is poisoned (green dominates)
+        is_poisoned = green_pixels > red_pixels
+        CONFIG["IS_POISONED"] = is_poisoned  # Save state to use in the monitor loop
+        
+        # Return fill percentage from the dominant color
+        return green_fill if is_poisoned else red_fill
 
 def get_mana_fill_percentage(region):
     """Return MP fill% from the region. 0 if region is invalid or not found."""
@@ -468,6 +492,8 @@ class AutoPotionApp:
         self.show_overlay_var = tk.BooleanVar(value=CONFIG.get("SHOW_THRESHOLD_OVERLAY", False))
         self.chicken_enabled_var = tk.BooleanVar(value=CONFIG.get("CHICKEN_ENABLED", DEFAULT_CHICKEN_ENABLED))
         self.chicken_threshold_var = tk.DoubleVar(value=CONFIG.get("CHICKEN_THRESHOLD", DEFAULT_CHICKEN_THRESHOLD))
+        # NEW: Poisoned threshold increase variable
+        self.poisoned_threshold_var = tk.DoubleVar(value=CONFIG.get("POISONED_THRESHOLD_INCREASE", DEFAULT_POISONED_THRESHOLD_INCREASE))
 
         self.monitoring = False
         self.paused = False
@@ -620,27 +646,29 @@ class AutoPotionApp:
         # Chickening
         ttk.Label(settings_frame, text="Chicken HP:").grid(row=6, column=0)
         ttk.Entry(settings_frame, textvariable=self.chicken_threshold_var, width=5).grid(row=6,column=1)
-
         chk_chicken = ttk.Checkbutton(settings_frame, text="Enable Chickening",
                                       variable=self.chicken_enabled_var)
         chk_chicken.grid(row=6,column=2,columnspan=2, sticky="w")
 
+        # NEW: Poisoned Threshold Increase setting
+        ttk.Label(settings_frame, text="Poisoned Threshold Increase (%):").grid(row=7, column=0)
+        ttk.Entry(settings_frame, textvariable=self.poisoned_threshold_var, width=5).grid(row=7, column=1)
+
         # Save
         btn_save = ttk.Button(settings_frame, text="Save All Settings",
                               command=self.save_all_settings)
-        btn_save.grid(row=7, column=0, columnspan=4, pady=5)
+        btn_save.grid(row=8, column=0, columnspan=4, pady=5)
 
         # Log
         log_frame = ttk.LabelFrame(main_frame, text="Log")
-        log_frame.grid(row=7, column=0, columnspan=3, pady=3, sticky="nsew")
-
+        log_frame.grid(row=9, column=0, columnspan=3, pady=3, sticky="nsew")
         self.log_text = tk.Text(log_frame, height=6, state="disabled")
         self.log_text.pack(fill="both", expand=True)
 
         # Start/Stop
         self.toggle_button = ttk.Button(main_frame, text="Start Monitoring",
                                         command=self.toggle_monitoring)
-        self.toggle_button.grid(row=8, column=0, columnspan=3, pady=5)
+        self.toggle_button.grid(row=10, column=0, columnspan=3, pady=5)
 
         self.update_hotkeys()
 
@@ -840,7 +868,6 @@ class AutoPotionApp:
         mp_h, mp_w = mp_cropped.shape[:2]
 
         # Convert the found location in screenshot to absolute screen coords
-        # because we took region=(x,y,w,h)
         hp_region = [x + max_loc_hp[0], y + max_loc_hp[1], hp_w, hp_h]
         mp_region = [x + max_loc_mp[0], y + max_loc_mp[1], mp_w, mp_h]
 
@@ -855,7 +882,6 @@ class AutoPotionApp:
         self.hp_region_label.config(text=f"HP Region: {hp_region}")
         self.mp_region_label.config(text=f"MP Region: {mp_region}")
         messagebox.showinfo("Auto Detection", "Health and Mana regions updated automatically!")
-
 
     # -------------------------
     # Save & Log
@@ -875,6 +901,8 @@ class AutoPotionApp:
         CONFIG["SHOW_THRESHOLD_OVERLAY"] = self.show_overlay_var.get()
         CONFIG["CHICKEN_ENABLED"] = self.chicken_enabled_var.get()
         CONFIG["CHICKEN_THRESHOLD"] = self.chicken_threshold_var.get()
+        # Save the new poisoned threshold increase setting
+        CONFIG["POISONED_THRESHOLD_INCREASE"] = self.poisoned_threshold_var.get()
 
         save_config()
 
@@ -1045,8 +1073,13 @@ class AutoPotionApp:
                                     self.current_random_hp_threshold,
                                     self.current_random_mp_threshold)
 
-            # potions
+            # Adjust HP lower threshold if poisoned (green health)
             hp_lower = self.hp_slider.lower_threshold
+            if CONFIG.get("IS_POISONED", False):
+                increase = CONFIG.get("POISONED_THRESHOLD_INCREASE", 0)
+                hp_lower = hp_lower * (1 + increase/100)
+
+            # potions
             hp_delay = CONFIG.get("HEALTH_POTION_DELAY",0.5)
             if (hp_fill < hp_lower) or (hp_fill < self.current_random_hp_threshold):
                 self.use_potion("1", hp_fill, "Health", hp_delay)
@@ -1102,7 +1135,6 @@ class AutoPotionApp:
             else:
                 self.log_message("Could NOT find 'Exit to Log In Screen' on screen!")
 
-        # This delay might be needed to allow the game to process the exit click; if possible, you can also try reducing it.
         time.sleep(2.0)
 
         self.log_message("Waiting for HP or MP to reappear (load screen) ...")
@@ -1123,7 +1155,6 @@ class AutoPotionApp:
                 self.log_message("HP/MP found (loading complete).")
                 break
             time.sleep(1.0)
-
 
 
 def main():
