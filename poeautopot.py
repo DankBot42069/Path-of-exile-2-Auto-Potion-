@@ -45,6 +45,159 @@ try:
 except AttributeError:
     RESAMPLE_FILTER = Image.ANTIALIAS
 
+
+# ------------------------------------------------------------------------------
+# HELPER FUNCTIONS ADDED (from second snippet for auto-find)
+# ------------------------------------------------------------------------------
+def list_windows():
+    """Return a list of visible window titles."""
+    windows = []
+    def enum_window(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd):
+            t = win32gui.GetWindowText(hwnd)
+            if t:
+                windows.append(t)
+        return True
+    win32gui.EnumWindows(enum_window, None)
+    return windows
+
+def refine_template_crop(template_img, target_color="red"):
+    """
+    Crop a template image around the main cluster of target_color pixels,
+    so that matchTemplate won't look at empty areas.
+    """
+    hsv = cv2.cvtColor(template_img, cv2.COLOR_BGR2HSV)
+    if target_color.lower() == "red":
+        lower_red1 = np.array([0, 50, 50])
+        upper_red1 = np.array([10, 255, 255])
+        lower_red2 = np.array([160, 50, 50])
+        upper_red2 = np.array([180, 255, 255])
+        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+        mask = cv2.bitwise_or(mask1, mask2)
+    elif target_color.lower() == "blue":
+        lower_blue = np.array([80, 50, 50])
+        upper_blue = np.array([140, 255, 255])
+        mask = cv2.inRange(hsv, lower_blue, upper_blue)
+    else:
+        return template_img  # no special handling
+
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    coords = cv2.findNonZero(mask)
+    if coords is not None:
+        x, y, w, h = cv2.boundingRect(coords)
+        cropped = template_img[y : y + h, x : x + w]
+        return cropped
+    else:
+        return template_img
+
+def crop_by_max_color_column(template_img, target_color="red", slice_width=4, crop_percent=0.05):
+    """
+    Another helper that tries to locate the 'best' vertical slice of the image
+    that has the most of the target color, to reduce noise in the matchTemplate.
+    """
+    hsv = cv2.cvtColor(template_img, cv2.COLOR_BGR2HSV)
+    if target_color.lower() == "red":
+        lower_red1 = np.array([0, 70, 50])
+        upper_red1 = np.array([10, 255, 255])
+        lower_red2 = np.array([160, 70, 50])
+        upper_red2 = np.array([180, 255, 255])
+        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+        mask = cv2.bitwise_or(mask1, mask2)
+    elif target_color.lower() == "blue":
+        lower_blue = np.array([80, 70, 50])
+        upper_blue = np.array([140, 255, 255])
+        mask = cv2.inRange(hsv, lower_blue, upper_blue)
+    else:
+        return template_img
+
+    col_sums = np.sum(mask > 0, axis=0)
+    max_col_index = int(np.argmax(col_sums))
+    h, w = template_img.shape[:2]
+    left = max(0, max_col_index - slice_width // 2)
+    right = min(w, left + slice_width)
+    cropped = template_img[:, left:right]
+
+    # Optionally remove top/bottom by crop_percent
+    crop_pixels = int(cropped.shape[0] * crop_percent)
+    cropped = cropped[crop_pixels : cropped.shape[0] - crop_pixels, :]
+
+    # Then refine again
+    cropped_refined = refine_template_crop(cropped, target_color=target_color)
+    return cropped_refined
+
+def show_auto_found_popup(screenshot_cv, hp_region, mp_region):
+    """
+    Shows a small popup window (800x600) with rectangles drawn over the
+    discovered HP and MP bar regions.
+    """
+    orig_h, orig_w, _ = screenshot_cv.shape
+    target_size = (800, 600)
+    screenshot_resized = cv2.resize(screenshot_cv, target_size, interpolation=cv2.INTER_AREA)
+    scale_x = target_size[0] / orig_w
+    scale_y = target_size[1] / orig_h
+
+    # Re-scale the found rectangles so we can draw them on the 800x600 image
+    hp_region_resized = [
+        int(hp_region[0] * scale_x),
+        int(hp_region[1] * scale_y),
+        int(hp_region[2] * scale_x),
+        int(hp_region[3] * scale_y),
+    ]
+    mp_region_resized = [
+        int(mp_region[0] * scale_x),
+        int(mp_region[1] * scale_y),
+        int(mp_region[2] * scale_x),
+        int(mp_region[3] * scale_y),
+    ]
+
+    screenshot_rgb = cv2.cvtColor(screenshot_resized, cv2.COLOR_BGR2RGB)
+    img_pil = Image.fromarray(screenshot_rgb)
+    draw = ImageDraw.Draw(img_pil)
+
+    # Draw red rectangle for HP
+    draw.rectangle(
+        [
+            hp_region_resized[0],
+            hp_region_resized[1],
+            hp_region_resized[0] + hp_region_resized[2],
+            hp_region_resized[1] + hp_region_resized[3],
+        ],
+        outline="red",
+        width=3,
+    )
+    # Draw blue rectangle for MP
+    draw.rectangle(
+        [
+            mp_region_resized[0],
+            mp_region_resized[1],
+            mp_region_resized[0] + mp_region_resized[2],
+            mp_region_resized[1] + mp_region_resized[3],
+        ],
+        outline="blue",
+        width=3,
+    )
+
+    popup = tk.Toplevel()
+    popup.title("Auto Found Regions")
+    popup.geometry("800x600")
+
+    img_tk = ImageTk.PhotoImage(img_pil)
+    label = tk.Label(popup, image=img_tk)
+    label.image = img_tk
+    label.pack()
+
+    confirm_btn = ttk.Button(popup, text="Confirm", command=popup.destroy)
+    confirm_btn.pack(pady=5)
+
+    popup.wait_window()
+
+
+# ------------------------------------------------------------------------------
+# Load & Save Config
+# ------------------------------------------------------------------------------
 def load_config():
     global CONFIG
     if os.path.exists(CONFIG_FILE):
@@ -76,6 +229,10 @@ def save_config():
     with open(CONFIG_FILE, "w") as f:
         json.dump(CONFIG, f, indent=4)
 
+
+# ------------------------------------------------------------------------------
+# Window detection
+# ------------------------------------------------------------------------------
 def get_game_window_rect():
     """Return (left, top, width, height) for the configured window, or None."""
     hwnd = win32gui.FindWindow(None, CONFIG.get("TARGET_WINDOW_TITLE","Path of Exile 2"))
@@ -85,6 +242,10 @@ def get_game_window_rect():
     left, top, right, bottom = rect
     return (left, top, right - left, bottom - top)
 
+
+# ------------------------------------------------------------------------------
+# HP/MP Fill detection
+# ------------------------------------------------------------------------------
 def get_health_fill_percentage(region):
     """Return HP fill% from the region. 0 if region is invalid or not found."""
     if not region or len(region) != 4:
@@ -138,9 +299,10 @@ def get_mana_fill_percentage(region):
         total_pixels = mask.shape[0] * mask.shape[1]
         return (blue_pixels / total_pixels) * 100 if total_pixels else 0
 
-# ---------------
+
+# ------------------------------------------------------------------------------
 # DualThresholdFillSlider
-# ---------------
+# ------------------------------------------------------------------------------
 class DualThresholdFillSlider(tk.Canvas):
     def __init__(self, master, width=250, height=30, fill_color="red",
                  label_text="HP",
@@ -226,9 +388,10 @@ class DualThresholdFillSlider(tk.Canvas):
             self.upper_threshold = max(new_val, self.lower_threshold)
         self.draw()
 
-# ---------------
+
+# ------------------------------------------------------------------------------
 # ThresholdOverlay
-# ---------------
+# ------------------------------------------------------------------------------
 class ThresholdOverlay:
     def __init__(self):
         self.overlay = None
@@ -277,9 +440,10 @@ class ThresholdOverlay:
         self.canvas.create_line(line_x, mp_y, line_x, mp_y+mp_h,
                                 fill="green", width=3, tags="mp_line")
 
-# ---------------
+
+# ------------------------------------------------------------------------------
 # AutoPotionApp
-# ---------------
+# ------------------------------------------------------------------------------
 class AutoPotionApp:
     def __init__(self, root):
         global CONFIG
@@ -302,7 +466,7 @@ class AutoPotionApp:
         self.single_screen_var = tk.StringVar(value=CONFIG.get("SINGLE_SCREEN_HOTKEY", DEFAULT_SINGLE_SCREEN_HOTKEY))
         self.use_gray_var = tk.BooleanVar(value=CONFIG.get("USE_GRAY_AS_EMPTY", False))
         self.show_overlay_var = tk.BooleanVar(value=CONFIG.get("SHOW_THRESHOLD_OVERLAY", False))
-        self.chicken_enabled_var = tk.BooleanVar(value=CONFIG.get("CHICKEN_ENABLED", False))
+        self.chicken_enabled_var = tk.BooleanVar(value=CONFIG.get("CHICKEN_ENABLED", DEFAULT_CHICKEN_ENABLED))
         self.chicken_threshold_var = tk.DoubleVar(value=CONFIG.get("CHICKEN_THRESHOLD", DEFAULT_CHICKEN_THRESHOLD))
 
         self.monitoring = False
@@ -385,7 +549,7 @@ class AutoPotionApp:
                                 command=lambda: self.select_region("MP"))
         btn_sel_mp.pack(side="left", expand=True, fill="x", padx=2)
 
-        # dummy auto-find
+        # Auto-Find button replaced to use the advanced approach
         btn_auto_find = ttk.Button(region_frame, text="Auto Find HP/MP Regions",
                                    command=self.auto_find_regions)
         btn_auto_find.pack(side="left", expand=True, fill="x", padx=2)
@@ -519,7 +683,6 @@ class AutoPotionApp:
     def toggle_gray_mode(self):
         CONFIG["USE_GRAY_AS_EMPTY"] = self.use_gray_var.get()
         save_config()
-        # update HP slider label
         mode_text = "HP Empty" if CONFIG["USE_GRAY_AS_EMPTY"] else "HP"
         self.hp_slider.label_text = mode_text
         self.hp_slider.draw()
@@ -536,15 +699,10 @@ class AutoPotionApp:
     # Region selection
     # -------------------------
     def select_target_window(self):
-        windows = []
-        def enum_window(hwnd, lParam):
-            if win32gui.IsWindowVisible(hwnd):
-                t = win32gui.GetWindowText(hwnd)
-                if t:
-                    windows.append(t)
-            return True
-        win32gui.EnumWindows(enum_window, None)
-
+        windows = list_windows()
+        if not windows:
+            messagebox.showerror("Error", "No windows found!")
+            return
         sel_win = tk.Toplevel(self.root)
         sel_win.title("Select Target Window")
         lb = tk.Listbox(sel_win, width=60)
@@ -635,9 +793,69 @@ class AutoPotionApp:
             messagebox.showinfo("Saved", f"{which} region saved.")
         ttk.Button(top_sel, text="Confirm", command=confirm_region).pack(pady=5)
 
+    # ------------- ADDED: Full auto-find method from second snippet -------------
     def auto_find_regions(self):
-        """Your advanced auto-detect could go here if you have template images."""
-        messagebox.showinfo("Auto Find","Not implemented in this sample.")
+        """Attempt to locate HP and MP bars automatically via template matching."""
+        target_title = CONFIG.get("TARGET_WINDOW_TITLE")
+        if not target_title:
+            messagebox.showwarning("Error", "Please select a target window first!")
+            return
+        hwnd = win32gui.FindWindow(None, target_title)
+        if hwnd == 0:
+            messagebox.showerror("Error", "Target window not found.")
+            return
+
+        rect = win32gui.GetWindowRect(hwnd)
+        x, y, w, h = rect[0], rect[1], rect[2]-rect[0], rect[3]-rect[1]
+        screenshot = pyautogui.screenshot(region=(x, y, w, h))
+        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+        # Expect user to provide health.png / mana.png in same directory
+        hp_template_path = os.path.join(SCRIPT_DIR, "health.png")
+        mp_template_path = os.path.join(SCRIPT_DIR, "mana.png")
+        if not os.path.exists(hp_template_path) or not os.path.exists(mp_template_path):
+            messagebox.showerror("Error", "Template images for HP (health.png) and MP (mana.png) not found!")
+            return
+
+        hp_template = cv2.imread(hp_template_path, cv2.IMREAD_COLOR)
+        mp_template = cv2.imread(mp_template_path, cv2.IMREAD_COLOR)
+        hp_refined = refine_template_crop(hp_template, target_color="red")
+        mp_refined = refine_template_crop(mp_template, target_color="blue")
+
+        hp_cropped = crop_by_max_color_column(hp_refined, target_color="red", slice_width=4, crop_percent=0.05)
+        mp_cropped = crop_by_max_color_column(mp_refined, target_color="blue", slice_width=4, crop_percent=0.05)
+
+        res_hp = cv2.matchTemplate(screenshot_cv, hp_cropped, cv2.TM_CCOEFF_NORMED)
+        _, max_val_hp, _, max_loc_hp = cv2.minMaxLoc(res_hp)
+
+        res_mp = cv2.matchTemplate(screenshot_cv, mp_cropped, cv2.TM_CCOEFF_NORMED)
+        _, max_val_mp, _, max_loc_mp = cv2.minMaxLoc(res_mp)
+
+        threshold = 0.8
+        if max_val_hp < threshold or max_val_mp < threshold:
+            messagebox.showerror("Error", "Could not detect health/mana regions automatically.")
+            return
+
+        hp_h, hp_w = hp_cropped.shape[:2]
+        mp_h, mp_w = mp_cropped.shape[:2]
+
+        # Convert the found location in screenshot to absolute screen coords
+        # because we took region=(x,y,w,h)
+        hp_region = [x + max_loc_hp[0], y + max_loc_hp[1], hp_w, hp_h]
+        mp_region = [x + max_loc_mp[0], y + max_loc_mp[1], mp_w, mp_h]
+
+        # Show popup so user sees the guess
+        show_auto_found_popup(screenshot_cv, hp_region, mp_region)
+
+        # Save to config
+        CONFIG["HP_REGION"] = hp_region
+        CONFIG["MP_REGION"] = mp_region
+        save_config()
+
+        self.hp_region_label.config(text=f"HP Region: {hp_region}")
+        self.mp_region_label.config(text=f"MP Region: {mp_region}")
+        messagebox.showinfo("Auto Detection", "Health and Mana regions updated automatically!")
+
 
     # -------------------------
     # Save & Log
@@ -791,12 +1009,12 @@ class AutoPotionApp:
                 if hp_fill < c_thr:
                     self.log_message(f"HP < {c_thr} => chickening out!")
                     # CHANGED: do not break or stop monitoring
-                    self.chicken_and_reconnect()  
+                    self.chicken_and_reconnect()
                     self.log_message("Waiting until HP >= 50% before using potions.")
                     # Wait for HP >= 50 but still keep monitoring loop alive
                     while True:
                         if not self.monitoring:
-                            return  # if user manually stops
+                            return
                         hp_fill = get_health_fill_percentage(CONFIG["HP_REGION"])
                         mp_fill = get_mana_fill_percentage(CONFIG["MP_REGION"])
                         self.root.after(0, self.hp_slider.set_fill, hp_fill)
@@ -830,13 +1048,11 @@ class AutoPotionApp:
             # potions
             hp_lower = self.hp_slider.lower_threshold
             hp_delay = CONFIG.get("HEALTH_POTION_DELAY",0.5)
-            # Only use HP pot if below your random OR the normal threshold
             if (hp_fill < hp_lower) or (hp_fill < self.current_random_hp_threshold):
                 self.use_potion("1", hp_fill, "Health", hp_delay)
 
             mp_lower = self.mp_slider.lower_threshold
             mp_delay = CONFIG.get("MANA_POTION_DELAY",0.5)
-            # Only use MP pot if below your random OR the normal threshold
             if (mp_fill < mp_lower) or (mp_fill < self.current_random_mp_threshold):
                 self.use_potion("2", mp_fill, "Mana", mp_delay)
 
@@ -853,30 +1069,32 @@ class AutoPotionApp:
     # Chicken flow
     # ---------------
     def chicken_and_reconnect(self):
-        """
-        We do NOT stop monitoring. We simply press ESC, locate the exit button,
-        click it, wait for HP/MP to reappear, then return here.
-        """
         self.log_message("Chickening flow: pressing ESC, searching for exit button.")
-        # bring window front
-        hwnd = win32gui.FindWindow(None, CONFIG.get("TARGET_WINDOW_TITLE","Path of Exile 2"))
-        if hwnd!=0:
+        hwnd = win32gui.FindWindow(None, CONFIG.get("TARGET_WINDOW_TITLE", "Path of Exile 2"))
+        if hwnd:
             try:
                 win32gui.SetForegroundWindow(hwnd)
-            except:
-                pass
+            except Exception as e:
+                self.log_message(f"Error setting foreground: {e}")
 
         pyautogui.press("esc")
-        time.sleep(0.3)
+        # Reduced delay to 0.1 seconds; adjust as needed based on UI response time
+        time.sleep(0.1)
 
         exit_path = os.path.join(SCRIPT_DIR, "exit_to_log_in_screen.png")
         if not os.path.exists(exit_path):
             self.log_message("ERROR: exit_to_log_in_screen.png not found!")
         else:
-            btn = pyautogui.locateOnScreen(exit_path, confidence=0.8)
+            # Use the game window's region to narrow the search area
+            game_rect = get_game_window_rect()
+            if game_rect:
+                x, y, w, h = game_rect
+                btn = pyautogui.locateOnScreen(exit_path, confidence=0.8, region=(x, y, w, h), grayscale=True)
+            else:
+                btn = pyautogui.locateOnScreen(exit_path, confidence=0.8, grayscale=True)
+
             if btn:
                 self.log_message("Exit button found. Clicking center...")
-                # CHANGED: Force click at center
                 center_x, center_y = pyautogui.center(btn)
                 pyautogui.moveTo(center_x, center_y)
                 pyautogui.click()
@@ -884,27 +1102,29 @@ class AutoPotionApp:
             else:
                 self.log_message("Could NOT find 'Exit to Log In Screen' on screen!")
 
-        # Give it a moment
+        # This delay might be needed to allow the game to process the exit click; if possible, you can also try reducing it.
         time.sleep(2.0)
 
         self.log_message("Waiting for HP or MP to reappear (load screen) ...")
         while True:
             if not self.monitoring:
-                return  # if user manually stops
-            hwnd = win32gui.FindWindow(None, CONFIG.get("TARGET_WINDOW_TITLE","Path of Exile 2"))
-            if hwnd!=0:
+                return
+            hwnd = win32gui.FindWindow(None, CONFIG.get("TARGET_WINDOW_TITLE", "Path of Exile 2"))
+            if hwnd:
                 try:
                     win32gui.SetForegroundWindow(hwnd)
-                except:
-                    pass
+                except Exception as e:
+                    self.log_message(f"Error setting foreground: {e}")
             hp = get_health_fill_percentage(CONFIG["HP_REGION"])
             mp = get_mana_fill_percentage(CONFIG["MP_REGION"])
             self.root.after(0, self.hp_slider.set_fill, hp)
             self.root.after(0, self.mp_slider.set_fill, mp)
-            if hp>1 or mp>1:
+            if hp > 1 or mp > 1:
                 self.log_message("HP/MP found (loading complete).")
                 break
             time.sleep(1.0)
+
+
 
 def main():
     root = tk.Tk()
